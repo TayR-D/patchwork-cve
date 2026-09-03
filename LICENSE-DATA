@@ -1,0 +1,16 @@
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+This licence covers the Patchwork dataset: the assembled advisory metadata,
+the model-generated analyses, and the agreement/adjudication labels.
+
+It does NOT cover the source code of the analysed repositories. The dataset ships
+commit pointers, content hashes and minimal excerpts; any code you reconstruct with
+fetch_full.py remains under its originating repository's own licence.
+
+Advisory metadata derives from OSV and GitHub Security Advisories (CC BY 4.0) and
+the National Vulnerability Database (public domain).
+
+Analyses were produced with Google Gemini via Vertex AI. Google's Service Specific
+Terms restrict using model output to create or improve models similar to a Google
+model; that restriction is passed through to users of this dataset.

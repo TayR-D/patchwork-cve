@@ -1,0 +1,7 @@
+out/
+state/
+*.patch
+*.jsonl
+*.parquet
+*.jsonl.gz
+__pycache__/
