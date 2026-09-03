@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: "Patchwork: A CWE-Labelled Corpus of Real Patched Vulnerabilities"
+message: "If you use this dataset, please cite it as below."
+type: dataset
+authors:
+  - alias: TayR-D
+repository-code: "https://github.com/TayR-D/patchwork-cve"
+url: "https://github.com/TayR-D/patchwork-cve"
+abstract: >-
+  16,597 real, already-patched public CVEs, each paired with its fix commit and a
+  structured analysis of the vulnerability: CWE classification, root cause, taint
+  source and sink, why the patch works, and a proposed detection heuristic. Labels
+  are produced by two independent model passes and scored against the MITRE CWE
+  hierarchy; disagreements are resolved by a third adjudication pass that sees both
+  analyses anonymised and order-randomised. Disagreement is preserved on every row.
+  Ships with a leakage-verified, group-aware train/eval split for vulnerability
+  detection and CWE classification research.
+keywords:
+  - vulnerability detection
+  - security dataset
+  - CVE
+  - CWE
+  - static analysis
+  - software security
+  - machine learning
+  - patch analysis
+  - taint analysis
+  - application security
+  - security research
+  - benchmark
+license: CC-BY-4.0
+version: "1.0"
+date-released: "2026-09-03"
