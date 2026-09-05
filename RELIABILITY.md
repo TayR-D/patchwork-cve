@@ -1,7 +1,20 @@
 # Patchwork — reliability audit
 
-100 rows drawn stratified across every `label_source` and spread over ecosystems, plus automated
-checks run over all 16,597 rows. Sample and method are reproducible from `out/audit_sample.json`.
+100 rows were drawn stratified across every `label_source` and spread over ecosystems, plus
+automated checks run over all 16,597 rows. The exact `out/audit_sample.json` used for the v1.0
+report was not included in the repository or release, so the sample-level figures and manual
+selections below cannot be independently reproduced. They should be treated as a disclosed spot
+check, not a reproducible accuracy estimate.
+
+For future audits, `pipeline/make_audit_sample.py` defines a deterministic method and records the
+source file hash, seed, and selected records:
+
+```bash
+python3 pipeline/make_audit_sample.py patchwork-cve.jsonl.gz \
+  --output out/audit_sample.json --size 100
+```
+
+This creates a new sample; it does not recreate or substantiate the unpublished v1.0 sample.
 
 ## Manual review
 
@@ -38,7 +51,9 @@ to emit a CWE. So 692 rows carry a label the model itself disclaimed.
 `analyzable` is surfaced as a top-level column for exactly this reason.
 **Filter `WHERE analyzable` before trusting `cwe_final`.** The labels are retained rather than nulled
 because they may still carry signal, but they are not cross-check-backed and should not be treated as
-ground truth. A future revision should make `cwe_primary` optional when `analyzable=false`.
+ground truth. The current pipeline makes `cwe_primary` optional on refusal and prevents refused,
+malformed, incomplete, or unknown-CWE responses from contributing a final label. This corrects
+future builds; it does not retroactively change the v1.0 files described above.
 
 ## Agreement with published advisory CWEs (audited sample)
 

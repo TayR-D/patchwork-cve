@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """Hierarchy-aware CWE comparison.
 
-String equality badly understates model agreement: CWE-917 vs CWE-94 or CWE-285
-vs CWE-284 are ancestor/descendant pairs, not contradictions. Measured on the
-day-1 pilot, string equality read 67% agreement where hierarchy-aware read 79%
-compatible with only 12.5% true conflict.
+String equality badly understates model agreement: CWE-338 vs CWE-330 or
+CWE-285 vs CWE-284 are ancestor/descendant pairs, not contradictions. Measured
+on the day-1 pilot, string equality read 67% agreement where hierarchy-aware
+read 79% compatible with only 12.5% true conflict.
 """
-import json, os, functools
+import functools
+import json
+import os
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_G = json.load(open(os.path.join(R, "schema", "cwe_graph.json")))
+GRAPH_PATH = os.path.join(R, "schema", "cwe_graph.json")
+try:
+    with open(GRAPH_PATH, encoding="utf-8") as graph_file:
+        _G = json.load(graph_file)
+except FileNotFoundError as error:
+    raise RuntimeError(
+        "missing schema/cwe_graph.json; regenerate it with "
+        "`python3 pipeline/build_cwe_graph.py`"
+    ) from error
 PARENTS, NAMES, ABSTRACTION = _G["parents"], _G["names"], _G.get("abstraction", {})
 
 ORDER = ["exact", "more_specific", "more_general", "sibling", "conflict", "missing"]

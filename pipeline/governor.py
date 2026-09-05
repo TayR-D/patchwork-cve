@@ -8,7 +8,7 @@ either way, so unused budget is wasted budget.
 import json, os, sys, datetime
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(R, "scripts"))
+sys.path.insert(0, os.path.join(R, "pipeline"))
 import ledger
 
 TARGET_THB   = 9400

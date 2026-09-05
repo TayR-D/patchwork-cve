@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """Patchwork session driver -- the daily runbook, in one command.
 
-  python3 scripts/session.py status     what is in flight / done / pending
-  python3 scripts/session.py submit N   build+submit up to N shards (governor-gated)
-  python3 scripts/session.py harvest    collect finished jobs -> BQ + ledger
-  python3 scripts/session.py run        harvest, then submit to keep MAX_INFLIGHT busy
+  python3 pipeline/session.py status     what is in flight / done / pending
+  python3 pipeline/session.py submit N   build+submit up to N shards (governor-gated)
+  python3 pipeline/session.py harvest    collect finished jobs -> BQ + ledger
+  python3 pipeline/session.py run        harvest, then submit to keep MAX_INFLIGHT busy
 
 State lives in state/shards.json, mirrored to GCS after every transition, so a
 session that dies mid-run resumes rather than restarts.
 """
 import json, os, sys, subprocess, datetime
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(R, "scripts"))
+sys.path.insert(0, os.path.join(R, "pipeline"))
 import batch, ledger, governor
 
 STATE = os.path.join(R, "state", "shards.json")
 ASSIGN = os.path.join(R, "out", "shard_assign.json")
+PASS_SCHEMA = os.path.join(R, "schema", "bq_pass.json")
 # Measured 2026-08-31: Pro and Flash draw from SEPARATE batch throughput pools --
 # running Pass B alongside Pass A left Pro at +11.9 rows/min (unchanged). So each
 # stage gets its own in-flight budget rather than sharing one.
@@ -56,12 +57,13 @@ def bq_load(table, recs):
             # change would drift. Detection happens at export via analysis != 'null'.
             fh.write(json.dumps({**r, "analysis": json.dumps(r.get("analysis"))}) + "\n")
     cp = subprocess.run(["bq","--project_id="+batch.PROJECT,"load","--source_format=NEWLINE_DELIMITED_JSON",
-                         "--autodetect","--replace=false",f"patchwork.{table}",tmp],
+                         "--schema="+PASS_SCHEMA,"--replace=false",
+                         "--schema_update_option=ALLOW_FIELD_ADDITION",
+                         f"patchwork.{table}",tmp],
                         capture_output=True, text=True, timeout=900)
     if cp.returncode != 0:
-        print(f"  ! bq load {table} failed: {cp.stderr[:300]}")
-    else:
-        print(f"  bq: loaded {len(recs)} rows -> patchwork.{table}")
+        raise RuntimeError(f"bq load {table} failed: {cp.stderr[:500]}")
+    print(f"  bq: loaded {len(recs)} rows -> patchwork.{table}")
 
 def cmd_status():
     st = load()
@@ -81,7 +83,9 @@ def cmd_harvest():
             print(f"  {s['id']}: poll failed {str(e)[:150]}"); continue
         state = j.get("state")
         if state == "JOB_STATE_SUCCEEDED":
-            recs, errs, cost = batch.harvest(s["id"], s["model"])
+            recs, errs, cost = batch.harvest(
+                s["id"], s["model"], s.get("attempt_id")
+            )
             ok = sum(1 for r in recs if r.get("analysis"))
             print(f"  {s['id']}: SUCCEEDED {len(recs)} recs ({ok} parsed), {len(errs)} errs, THB {cost['thb']}")
             bq_load(s["stage"], recs)
@@ -100,7 +104,9 @@ def cmd_harvest():
             # 24h wall (or was cancelled) usually still has real output in GCS.
             # Salvage it -- the alternative is silently discarding paid-for work.
             try:
-                recs, errs, cost = batch.harvest(s["id"], s["model"])
+                recs, errs, cost = batch.harvest(
+                    s["id"], s["model"], s.get("attempt_id")
+                )
                 ok = sum(1 for r in recs if r.get("analysis"))
                 if recs:
                     bq_load(s["stage"], recs)
@@ -141,11 +147,14 @@ def cmd_submit(n=None):
         return
     for s in todo:
         rows = rows_for(s["id"])
-        _, kept, missing = batch.build(rows, s["id"], s["model"], s["thinking"])
+        _, kept, missing, attempt_id = batch.build(
+            rows, s["id"], s["model"], s["thinking"]
+        )
         if kept == 0:
             print(f"  {s['id']}: no rows with patches, skipping"); continue
-        job = batch.submit(s["id"], s["model"])
+        job = batch.submit(s["id"], s["model"], attempt_id)
         s["status"] = "submitted"; s["job"] = job["name"]; s["built"] = kept; s["missing"] = missing
+        s["attempt_id"] = attempt_id
         s["submitted_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         print(f"  {s['id']}: submitted {kept} rows ({missing} missing patches) job={job['name'].split('/')[-1]}")
         save(st)

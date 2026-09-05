@@ -1,0 +1,18 @@
+[
+  {"name": "cve", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "model", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "shard", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "attempt_id", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "patch_sha256", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "candidate_fingerprint", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "input_sha256", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "record_sha256", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "analysis_pair_sha256", "type": "STRING"},
+  {"name": "pass_pro_record_sha256", "type": "STRING"},
+  {"name": "pass_flash_record_sha256", "type": "STRING"},
+  {"name": "analysis", "type": "STRING"},
+  {"name": "finish", "type": "STRING"},
+  {"name": "parse_error", "type": "STRING"},
+  {"name": "tokens_in", "type": "INTEGER"},
+  {"name": "tokens_out", "type": "INTEGER"}
+]

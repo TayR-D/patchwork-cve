@@ -47,18 +47,35 @@ Download from the [latest release](../../releases/latest):
 import pandas as pd
 df = pd.read_parquet("patchwork-cve.parquet")
 
-# IMPORTANT: filter refusals before trusting the label -- see below
-usable = df[df.analyzable]
+# v1.0-compatible refusal filter
+usable = df[df.analyzable & df.cwe_final.notna()]
+
+# Datasets rebuilt with the current pipeline expose stricter per-pass gates.
+if "crosscheck_usable" in df.columns:
+    usable = df[(df.usable_pro | df.usable_flash) & df.cwe_final.notna()]
+    crosschecked = df[df.crosscheck_usable]
 ```
 
 ## Read this before using `cwe_final`
 
-`cwe_primary` was a **required** field in the analysis schema. When the model set `analyzable=false`
-— honestly declining a diff it could not interpret — the schema still forced it to emit a CWE.
-**692 rows (4.2%) carry a label the model itself disclaimed.** They are retained rather than nulled
-because they may still carry signal, but they are not cross-check-backed.
+The current pipeline allows `cwe_primary` to be null or absent when a model sets
+`analyzable=false`. It also treats a response as usable only when it parsed, completed normally,
+explicitly opted into analysis, and supplied a CWE identifier present in the pinned catalog.
 
-**Always filter on `analyzable` before treating `cwe_final` as a label.**
+`analyzable_pro` and `analyzable_flash` preserve each model's explicit decision. `usable_pro` and
+`usable_flash` apply the stricter validation above, and `crosscheck_usable` is true only when both
+passes are usable. A single usable pass may supply `cwe_final`, but its source is explicitly
+`single_model_unverified`; if neither pass is usable, `cwe_final`, `label_source`, and `relation` are
+null. Refused outputs retain their raw `cwe_pro` / `cwe_flash` values for audit but never receive an
+agreement label or enter adjudication.
+
+For backward compatibility, top-level `analyzable` remains an alias for Pro's explicit analyzability
+decision (missing or malformed decisions become false). Prefer `crosscheck_usable` when consuming
+cross-checked labels.
+
+The v1.0 artifact predates this pipeline fix: its schema forced a CWE on refusals, including 692 rows
+(4.2%) carrying a label the model itself disclaimed. Filter those files on `analyzable` before using
+`cwe_final`.
 
 ## How the labels were made
 
@@ -77,8 +94,9 @@ order-randomised**, so it cannot defer to the better-known model by reputation.
 | `agreement_specific` — hierarchy-compatible | 1,640 | 9.9% |
 | `single_model_unverified` — no cross-check available | 22 | 0.13% |
 
-**Disagreement is preserved on every row.** `cwe_pro`, `cwe_flash` and `relation` are always present,
-so you can re-derive or override any label decision.
+**Model output is preserved on every row.** `cwe_pro` and `cwe_flash` retain the raw labels when
+present. `relation` is populated only when both analyses are usable, so refused or missing passes
+cannot masquerade as cross-checked evidence.
 
 ### Did the second model earn its cost?
 
@@ -90,11 +108,15 @@ so you can re-derive or override any label decision.
 | Flash's label preferred | 24.2% |
 | neither — adjudicator supplied a third CWE | 12.1% |
 
-A single-model corpus would carry the wrong primary CWE on roughly **36% of disagreement rows**.
-Position bias check: slot 1 chosen 44.8% vs slot 2 43.2%, so the adjudicator judged on evidence
-rather than position.
+Using Pro alone would produce a different primary CWE from the adjudicator on roughly **36% of
+disagreement rows**. That is model disagreement, not a measured error rate. Slot 1 was chosen 44.8%
+of the time versus 43.2% for slot 2; this is a useful diagnostic, but does not by itself prove the
+absence of position bias or establish label correctness.
 
 ## Schema
+
+The refusal gates and versioned patch-provenance columns below describe datasets rebuilt with the
+current pipeline. They are not present in the published v1.0 files unless noted as backward-compatible.
 
 | column | type | description |
 |---|---|---|
@@ -108,14 +130,31 @@ rather than position.
 | `published` | string | advisory publication date |
 | `repo_owner`, `repo_name` | string | GitHub repository of the fix |
 | `fix_sha` | string | commit SHA of the fix |
+| `candidate_fingerprint` | string | hash of the full advisory/commit candidate plus collected patch hash |
 | `patch_sha256` | string | hash of the fetched diff; also the duplicate-group key |
 | `patch_bytes` | int | size of the fetched diff |
 | `n_commits` | int | number of fix commits (max 3) |
-| **`cwe_final`** | string | **the label to use** — filter by `analyzable` first |
-| **`label_source`** | string | `agreement` / `adjudicated` / `agreement_specific` / `single_model_unverified` |
-| **`analyzable`** | bool | **false = the model declined; do not trust `cwe_final`** |
+| `patch_format` | string | versioned recipe used to assemble the collected patch bytes |
+| `patch_representation`, `patch_joiner` | string | source representation and deterministic part separator |
+| `patch_max_bytes_per_commit` | int | collection cap applied independently to each source commit |
+| `patch_commits` | list | ordered commit descriptors with per-part hashes and byte caps |
+| `patch_truncated` | bool | whether any source response exceeded its collection byte cap |
+| `patch_partial_fetch` | bool | whether any listed source commit failed to fetch (always false in a release) |
+| `patch_complete` | bool | false when collection intentionally truncated a source response |
+| **`cwe_final`** | string/null | **the label to use** — in current builds require `usable_pro OR usable_flash`; for v1.0 require `analyzable` |
+| **`label_source`** | string/null | `agreement` / `adjudicated` / `agreement_specific` / `single_model_unverified` / `adjudication_missing`; null when unusable |
+| **`analyzable`** | bool | backward-compatible alias for Pro's explicit analyzability decision |
+| `analyzable_pro`, `analyzable_flash` | bool/null | each model's explicit analyzability decision |
+| `usable_pro`, `usable_flash` | bool | pass parsed and completed with `analyzable=true` and a known CWE |
+| **`crosscheck_usable`** | bool | **true only when both independent analyses are usable** |
+| `analysis_patch_sha256` | string | patch hash to which the selected model records are bound |
+| `analysis_candidate_fingerprint` | string | candidate fingerprint to which those records are bound |
+| `pass_pro_record_sha256`, `pass_flash_record_sha256` | string/null | fingerprints of the exact selected pass records |
+| `analysis_pair_sha256` | string/null | fingerprint binding adjudication to the selected Pro/Flash pair |
+| `analysis_status` | string | `crosschecked` / `pro_only` / `flash_only` / `no_usable_analysis` |
+| `pass_pro_present`, `pass_flash_present` | bool | whether each model returned a stored pass record |
 | `cwe_pro`, `cwe_flash` | string | each model's independent CWE |
-| `relation` | string | hierarchy relation: `exact`, `more_specific`, `more_general`, `sibling`, `conflict` |
+| `relation` | string/null | hierarchy relation for usable cross-checks; null if either pass is unusable |
 | `advisory_relation` | string | same relation, analysis vs advisory CWE |
 | `cwe_adjudicated` | string | CWE chosen by blind adjudication, where it ran |
 | `adj_chose` | string | `analysis_1` / `analysis_2` / `neither` (slots anonymised) |
@@ -129,6 +168,10 @@ rather than position.
 | `split` | string | `train` or `eval` |
 | `dup_group_size` | int | how many CVEs share this patch hash |
 | `analysis_is_model_generated` | bool | always true — the analysis layer is machine-produced |
+
+The types above are Parquet/logical types. BigQuery exports `INT64` values as JSON strings, so
+JSONL readers should cast `n_commits`, `patch_bytes`, `patch_max_bytes_per_commit`,
+`dup_group_size`, and integer fields nested under `patch_commits`.
 
 Fields inside `analysis_pro` / `analysis_flash`: `analyzable`, `cwe_primary`, `cwe_secondary`,
 `cwe_confidence`, `vulnerability_class`, `root_cause`, `taint_source`, `taint_sink`, `taint_path`,
@@ -154,11 +197,18 @@ hash lands on the same side. Verified: **0 patch hashes span both splits.**
 ## Licensing and code
 
 Rows carry commit pointers, patch SHA256 and metadata — **not** wholesale source — so each file stays
-under its originating repository's licence. Reconstruct full diffs with:
+under its originating repository's licence. Reconstruct and verify the exact bytes used for analysis
+with:
 
 ```bash
 python3 fetch_full.py patchwork-cve.jsonl.gz --out patches/
 ```
+
+Datasets rebuilt with the current pipeline include ordered `patch_commits`, representation, joiner,
+and truncation metadata, allowing exact reconstruction of multi-commit and capped records.
+The v1.0 release omitted that provenance: its single, uncapped commit records remain reconstructable,
+but multi-commit and collection-truncated rows will report `hash_mismatch`. Mismatched bytes are not
+written unless `--write-mismatches` is explicitly supplied.
 
 Dataset CC-BY-4.0 (`LICENSE-DATA`), code MIT (`LICENSE-CODE`). Advisory metadata from OSV and GHSA
 (CC-BY-4.0) and NVD (public domain). Analyses generated with Google Gemini via Vertex AI; Google's
@@ -193,8 +243,37 @@ model, and that restriction is passed through to users of this dataset.
 
 ## Reproducing it
 
-`pipeline/` holds the full pipeline: OSV corpus construction, patch fetching, Vertex batch analysis,
-hierarchy-aware agreement scoring, blind adjudication, and export. It was built and run end-to-end on
-a fixed GCP credit budget, governed by a spend controller that self-accounts from token usage.
+`pipeline/` contains the stage implementations for OSV corpus construction, patch fetching, Vertex
+batch analysis, hierarchy-aware agreement scoring, blind adjudication, and export. Python 3.9 or
+newer is required. The dependency-free local stages start with:
+
+```bash
+python3 pipeline/build_cwe_graph.py  # verifies pinned MITRE CWE 4.20 input
+python3 pipeline/build_corpus.py     # writes out/candidates.jsonl from the current OSV bulk feed
+python3 pipeline/fetch_patches.py    # writes patches and byte-level provenance under out/
+python3 pipeline/make_shards.py      # writes the Pass A plan under state/
+python3 -m unittest discover -s tests -v
+```
+
+The generated CWE graph is checked in, so agreement scoring and tests run offline. Its source URL,
+version, view, and archive SHA-256 are recorded in `schema/cwe_graph.json`; see
+[`schema/NOTICE.md`](schema/NOTICE.md).
+It is an auditable replacement for the graph omitted from v1.0, not evidence that the published
+v1.0 agreement counts used these exact edges.
+
+The paid stages additionally require authenticated `gcloud` and `bq` CLIs, a Vertex AI project,
+GCS bucket, and BigQuery `patchwork` dataset. Configure the project-specific defaults with
+`PW_PROJECT`, `PW_REGION`, and `PW_BUCKET` before using `pipeline/session.py` and the later drivers.
+Pass tables produced before patch-hash binding was added are intentionally incompatible; start with
+empty `pass_a`, `pass_b`, and `pass_c` tables and regenerate shard state rather than reusing unbound
+v1.0 cloud rows. New jobs use unique attempt paths and verify provenance embedded in each echoed
+request, so retry output cannot be confused with another shard attempt.
+
+This repository is not yet a bit-for-bit recipe for the v1.0 release. The OSV input is a live feed,
+and the exact source snapshot, Pass B shard plan/cloud state, model outputs, and original audit sample
+were not published. In particular, `make_shards.py` creates only the Pass A plan; do not claim a fresh
+end-to-end reproduction until the Pass B orchestration and immutable inputs are versioned. The audit
+helper in `pipeline/make_audit_sample.py` creates a new deterministic future sample, not the missing
+v1.0 sample.
 
 Total compute: **THB 8,870** (~USD 257) across 165M input and 52M output tokens.

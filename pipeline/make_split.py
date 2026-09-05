@@ -6,9 +6,9 @@ several advisories). Those rows are real and are kept -- but a naive random spli
 would put the same diff in train and eval, so the split is made GROUP-AWARE:
 every CVE sharing a patch hash lands on the same side.
 """
-import json, os, subprocess, sys, hashlib, collections
+import json, os, subprocess, sys
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(R, "scripts"))
+sys.path.insert(0, os.path.join(R, "pipeline"))
 import batch
 P = batch.PROJECT
 

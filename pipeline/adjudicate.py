@@ -6,7 +6,7 @@ The two candidate analyses are presented ANONYMOUSLY ("Analysis 1" / "Analysis 2
 order randomised per row) so the adjudicator cannot defer to the stronger model
 by reputation -- it has to argue from the diff.
 """
-import json, os, random, hashlib
+import os, hashlib
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -56,7 +56,7 @@ patch reasoning: {pr2}
 
 def build_adj_request(row, pro, flash, patch_text, thinking=1024, max_patch=32000):
     """Anonymise + randomise the two analyses, then build the request body."""
-    import sys; sys.path.insert(0, os.path.join(R, "scripts"))
+    import sys; sys.path.insert(0, os.path.join(R, "pipeline"))
     from analyze import trim_patch
     patch, _, _ = trim_patch(patch_text, max_patch)
     # deterministic per-CVE ordering so re-runs are reproducible
