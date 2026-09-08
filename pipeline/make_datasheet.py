@@ -6,8 +6,8 @@ the ledger, or the agreement scores, so the document cannot drift from the data.
 """
 import json, os, sys, subprocess, collections
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(R, "scripts"))
-import batch, ledger
+sys.path.insert(0, os.path.join(R, "pipeline"))
+import batch, ledger, export as export_pipeline
 
 P = batch.PROJECT
 
@@ -27,6 +27,24 @@ def q(sql, default=None):
         raise RuntimeError(msg[:400] or "bq failed with no message")
     return json.loads(cp.stdout or "[]")
 
+
+def agreement_counters(path):
+    """Summarise only genuine two-model comparisons for the datasheet."""
+    if not os.path.exists(path):
+        return collections.Counter(), collections.Counter()
+    with open(path) as agreement_file:
+        rows = [json.loads(line) for line in agreement_file if line.strip()]
+    relations = collections.Counter(
+        row["relation"] for row in rows
+        if row.get("relation") is not None
+        and row.get("crosscheck_usable", True)
+    )
+    statuses = collections.Counter(
+        row.get("analysis_status") for row in rows if row.get("analysis_status")
+    )
+    return relations, statuses
+
+
 def main():
     tot = int(q(f"SELECT COUNT(*) n FROM `{P}.patchwork.candidates`")[0]["n"])
     eco = q(f"SELECT ecosystem, COUNT(*) n FROM `{P}.patchwork.candidates` "
@@ -34,14 +52,20 @@ def main():
     yr  = q(f"SELECT SUBSTR(cve,5,4) y, COUNT(*) n FROM `{P}.patchwork.candidates` "
             f"GROUP BY 1 ORDER BY y")
     none = [{"n": 0, "failed": 0}]
-    pa  = q(f"SELECT COUNT(*) n, COUNTIF(analysis='null') failed FROM `{P}.patchwork.pass_a`", none)[0]
-    pb  = q(f"SELECT COUNT(*) n, COUNTIF(analysis='null') failed FROM `{P}.patchwork.pass_b`", none)[0]
+    pa = q(f"""SELECT COUNT(*) n, COUNTIF(p.analysis='null') failed
+                FROM ({export_pipeline.PASS_A_ONE_SQL}) p
+                JOIN `{P}.patchwork.candidates` c
+                  ON p.cve = c.cve AND p.patch_sha256 = c.patch_sha256
+                 AND p.candidate_fingerprint = c.candidate_fingerprint""", none)[0]
+    pb = q(f"""SELECT COUNT(*) n, COUNTIF(p.analysis='null') failed
+                FROM ({export_pipeline.PASS_B_ONE_SQL}) p
+                JOIN `{P}.patchwork.candidates` c
+                  ON p.cve = c.cve AND p.patch_sha256 = c.patch_sha256
+                 AND p.candidate_fingerprint = c.candidate_fingerprint""", none)[0]
     spend = ledger.totals()
 
-    rel = {}
     ag = f"{R}/out/agreement.jsonl"
-    if os.path.exists(ag):
-        rel = collections.Counter(json.loads(l)["relation"] for l in open(ag))
+    rel, analysis_status = agreement_counters(ag)
 
     L = []
     A = L.append
@@ -73,12 +97,20 @@ def main():
     A("runs. Ancestor/descendant CWE pairs count as compatible (the more specific label wins);")
     A("siblings and unrelated pairs go to a third adjudication pass that sees both analyses")
     A("**anonymised and order-randomised**, so it cannot defer to the stronger model by reputation.\n")
+    A("Only parsed, normally completed responses with `analyzable=true` and a known CWE are")
+    A("eligible for comparison or adjudication. A single usable response is explicitly marked")
+    A("`single_model_unverified`; a row with no usable response receives no final label.\n")
+    if analysis_status:
+        A("| analysis status | rows |"); A("|---|---:|")
+        for k, v in analysis_status.most_common(): A(f"| {k} | {v:,} |")
+        A("")
     if rel:
         n = sum(rel.values())
-        A("| relation | rows | share |"); A("|---|---:|---:|")
+        A("| relation (usable cross-checks only) | rows | share |"); A("|---|---:|---:|")
         for k, v in rel.most_common(): A(f"| {k} | {v:,} | {v/n*100:.1f}% |")
-    A("\n**Disagreement is preserved on every row.** A row where the models diverged is marked as")
-    A("such rather than silently resolved; the adjudicated label is recorded alongside both originals.\n")
+    A("\n**Raw model output is preserved on every row.** A usable disagreement is marked rather")
+    A("than silently resolved; the adjudicated label is recorded alongside both originals. Refused")
+    A("or missing passes have no relation and cannot masquerade as cross-checked evidence.\n")
     # adjudication results, read from the built table
     try:
         adj = q(f"""SELECT COUNTIF(adj_chose='analysis_1') a1, COUNTIF(adj_chose='analysis_2') a2,
@@ -87,20 +119,19 @@ def main():
                     FROM `{P}.patchwork.dataset_final` WHERE cwe_adjudicated IS NOT NULL""", None)[0]
         n = int(adj["n"])
         A("### Does the cross-check earn its cost?\n")
-        A(f"{n:,} disagreements were adjudicated blind. Decoding which model each anonymous slot held:\n")
+        A(f"{n:,} disagreements were adjudicated blind. Outcomes by anonymous input slot:\n")
         A("| outcome | rows | share |"); A("|---|---:|---:|")
-        A(f"| Pro's label preferred | 2,196 | 63.7% |")
-        A(f"| Flash's label preferred | 834 | 24.2% |")
-        A(f"| neither -- adjudicator supplied a third CWE | 416 | 12.1% |")
+        for label, field in (("analysis 1 selected", "a1"),
+                             ("analysis 2 selected", "a2"),
+                             ("neither -- a third CWE supplied", "nei")):
+            count = int(adj[field])
+            A(f"| {label} | {count:,} | {count/n*100:.1f}% |")
         A("")
-        A("A single-model (Pro-only) corpus would therefore carry the wrong primary CWE on roughly")
-        A("**36% of these rows** -- 834 where Flash was right and 416 where both were wrong. That is the")
-        A("concrete value of the second pass, measured rather than assumed.\n")
-        A(f"Position bias check: analysis_1 chosen {int(adj['a1'])/n*100:.1f}% vs analysis_2 "
-          f"{int(adj['a2'])/n*100:.1f}%. Slot order was randomised per CVE and model identity hidden, so")
-        A("this near-even split indicates the adjudicator judged on evidence rather than position.\n")
-        A(f"`both_defensible` was set on {int(adj['both_ok'])/n*100:.1f}% of adjudications, consistent with")
-        A("the hierarchy finding: most apparent disagreement is a difference of abstraction level.\n")
+        A(f"Position diagnostic: analysis_1 chosen {int(adj['a1'])/n*100:.1f}% vs analysis_2 "
+          f"{int(adj['a2'])/n*100:.1f}%. Slot order was randomised per CVE and model identity hidden; "
+          "this comparison alone does not establish absence of bias or label accuracy.\n")
+        A(f"`both_defensible` was set on {int(adj['both_ok'])/n*100:.1f}% of adjudications. This")
+        A("describes the adjudicator's output; it is not an independent accuracy estimate.\n")
     except Exception as e:
         A(f"\n> (adjudication stats unavailable: {type(e).__name__})\n")
 

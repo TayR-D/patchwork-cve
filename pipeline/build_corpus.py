@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Patchwork: build the CVE-fix candidate index from OSV bulk data.
 
-Emits one JSONL row per (CVE, fix-commit) candidate. No inference here --
-this stage is free and deterministic, so it runs before any credit is spent.
+Emits one JSONL row per (CVE, fix-commit) candidate. No inference happens here,
+so this stage is free and runs before any credit is spent. The default OSV bulk
+feed is live; preserve the downloaded ZIPs when an exactly repeatable source
+snapshot is required.
 """
-import zipfile, json, re, os, sys, collections, urllib.request, hashlib
+import zipfile, json, re, os, sys, collections, urllib.request
 
+R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OSV = "https://osv-vulnerabilities.storage.googleapis.com"
 ECOS = ["Go","crates.io","npm","PyPI","Maven","Packagist","RubyGems","NuGet",
         "Hex","Pub","Hackage","CRAN","GitHub Actions","Linux","GIT"]
 CRE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/commit/([0-9a-f]{7,40})")
+CVE_RE = re.compile(r"CVE-[0-9]{4}-[0-9]{4,}\Z")
 
 def cache_dir():
     d = os.environ.get("PW_CACHE", "/tmp/pw_osv"); os.makedirs(d, exist_ok=True); return d
@@ -40,7 +44,7 @@ def extract(eco, zf):
         try: d = json.loads(z.read(n))
         except Exception: continue
         if d.get("withdrawn"): continue
-        cves = sorted(a for a in d.get("aliases", []) if a.startswith("CVE-"))
+        cves = sorted(a for a in d.get("aliases", []) if CVE_RE.fullmatch(a))
         if not cves: continue
         commits, seen = [], set()
         for r in d.get("references", []) or []:
@@ -99,7 +103,8 @@ def main():
             best[k] = (score, r)
     final = [v[1] for v in best.values()]
     final.sort(key=lambda r: r["cve"])
-    out = os.environ.get("PW_OUT", "candidates.jsonl")
+    out = os.environ.get("PW_OUT", os.path.join(R, "out", "candidates.jsonl"))
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "w") as fh:
         for r in final: fh.write(json.dumps(r, ensure_ascii=False) + "\n")
     print(f"\n  raw rows        {len(rows)}")

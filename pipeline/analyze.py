@@ -55,7 +55,10 @@ SCHEMA = {
   "properties":{
     "analyzable":{"type":"boolean"},
     "unanalyzable_reason":{"type":"string"},
-    "cwe_primary":{"type":"string"},
+    # Vertex responseSchema supports nullable fields, but not JSON Schema
+    # conditionals (if/then).  A refusal must therefore be allowed to carry no
+    # CWE here and is validated against ``analyzable`` again downstream.
+    "cwe_primary":{"type":"string", "nullable":True},
     "cwe_secondary":{"type":"array","items":{"type":"string"}},
     "cwe_confidence":{"type":"number"},
     "vulnerability_class":{"type":"string"},
@@ -75,7 +78,7 @@ SCHEMA = {
     "exploit_preconditions":{"type":"array","items":{"type":"string"}},
     "confidence_overall":{"type":"number"}
   },
-  "required":["analyzable","cwe_primary","cwe_confidence","vulnerability_class","root_cause",
+  "required":["analyzable","cwe_confidence","vulnerability_class","root_cause",
               "patch_mechanism","patch_sufficient","patch_reasoning","detection_heuristic",
               "detection_kind","false_positive_risk","confidence_overall"]
 }
@@ -84,9 +87,9 @@ PROMPT = """You are analysing a PUBLIC, ALREADY-PATCHED software vulnerability f
 
 Analyse the vulnerability that the commit below FIXES.
 
-Ground every claim in the diff. Where the advisory text and the diff disagree, trust the diff. If the diff does not actually contain enough information to identify the vulnerability (for example it is only a version bump, a docs change, or the relevant code is not shown), set analyzable=false and explain why in unanalyzable_reason -- do not guess. An honest refusal is far more valuable to this dataset than a plausible fabrication.
+Ground every claim in the diff. Where the advisory text and the diff disagree, trust the diff. If the diff does not actually contain enough information to identify the vulnerability (for example it is only a version bump, a docs change, or the relevant code is not shown), set analyzable=false, set cwe_primary=null, and explain why in unanalyzable_reason -- do not guess. An honest refusal is far more valuable to this dataset than a plausible fabrication.
 
-Assign cwe_primary as a specific CWE identifier such as "CWE-89". Set cwe_confidence and confidence_overall to your genuine calibrated confidence in [0,1], not a default value.
+Only when analyzable=true, assign cwe_primary as a specific CWE identifier such as "CWE-89". Set cwe_confidence and confidence_overall to your genuine calibrated confidence in [0,1], not a default value.
 
 detection_heuristic must describe what a static or dynamic analyser should look for to catch this class of bug in other code -- not merely a restatement of this specific fix.
 
