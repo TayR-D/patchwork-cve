@@ -43,14 +43,10 @@ def project(state, corpus_rows, conflict_rate=None):
             # a shard that hit the 24h wall is not zero progress -- it was salvaged
             done[sh["stage"]] = done.get(sh["stage"], 0) + sh.get("salvaged", 0)
         elif sh.get("status") == "submitted" and sh.get("job"):
-            # in-flight: count live completionStats as "paid for" so remaining-work
-            # estimates don't double-count rows the job has already processed
-            try:
-                import batch
-                cs = batch.get_job(sh["job"]).get("completionStats", {})
-                done[sh["stage"]] = done.get(sh["stage"], 0) + int(cs.get("successfulCount", 0))
-            except Exception:
-                pass
+            # Unharvested jobs are absent from the spend ledger. Keep their rows in
+            # the future-cost estimate until harvest records the actual cost; live
+            # completionStats must not make reserved work disappear from projection.
+            continue
     rem_a = max(0, corpus_rows - done["pass_a"])
     rem_b = max(0, corpus_rows - done["pass_b"])
     rem_c = max(0, int(corpus_rows * conflict_rate) - done["pass_c"])
